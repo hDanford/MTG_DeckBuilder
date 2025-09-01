@@ -134,116 +134,143 @@
     </section>
   </main>
 
-  <script>
-    // --- Filter state management ---
-    const filterState = new Map();
-    function getSet(group){ if(!filterState.has(group)) filterState.set(group, new Set()); return filterState.get(group); }
-    function hasAnyFilters(){ for (const [,set] of filterState) { if (set.size) return true; } return false; }
+<script>
+  // ---------- Filter state ----------
+  const filterState = new Map();
+  function getSet(group){ if(!filterState.has(group)) filterState.set(group, new Set()); return filterState.get(group); }
+  function hasAnyFilters(){ for (const [,set] of filterState) { if (set.size) return true; } return false; }
 
-    function renderActiveFilters(){
-      const container = document.getElementById('activeFilters');
-      const clearBtn = document.getElementById('clearFilters');
-      container.innerHTML = '';
-      for (const [group, set] of filterState) {
-        for (const val of set) {
-          const chip = document.createElement('span');
-          chip.className = 'chip';
-          chip.dataset.group = group;
-          chip.dataset.value = val;
-          chip.innerHTML = `${group}: ${val} <button type="button" aria-label="Remove ${val} from ${group}">×</button>`;
-          container.appendChild(chip);
-        }
+  function toggleFilterButtonVisual(btn, active){
+    if(active){ btn.classList.add('is-active'); btn.setAttribute('aria-pressed','true'); }
+    else { btn.classList.remove('is-active'); btn.setAttribute('aria-pressed','false'); }
+  }
+
+  function renderActiveFilters(){
+    const container = document.getElementById('activeFilters');
+    const clearBtn = document.getElementById('clearFilters');
+    container.innerHTML = '';
+
+    for (const [group, set] of filterState) {
+      for (const val of set) {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.dataset.group = group;
+        chip.dataset.value = val;
+        chip.innerHTML = `${group}: ${val} <button type="button" aria-label="Remove ${val} from ${group}">×</button>`;
+        container.appendChild(chip);
       }
-      clearBtn.hidden = !hasAnyFilters();
     }
+    clearBtn.hidden = !hasAnyFilters();
+  }
 
-    function toggleFilter(button){
-      const group = button.closest('.filter-group').dataset.group;
-      const value = button.dataset.filterValue;
-      const set = getSet(group);
-      if (set.has(value)) { set.delete(value); button.classList.remove('is-active'); button.setAttribute('aria-pressed', 'false'); }
-      else { set.add(value); button.classList.add('is-active'); button.setAttribute('aria-pressed', 'true'); }
-      renderActiveFilters();
-    }
+  // Core toggle that updates state only
+  function toggleValue(group, value){
+    const set = getSet(group);
+    const willActivate = !set.has(value);
+    if (willActivate) set.add(value); else set.delete(value);
+    renderActiveFilters();
+    return willActivate;
+  }
 
-    document.querySelectorAll('.filter-btn').forEach(btn => btn.addEventListener('click', () => toggleFilter(btn)));
-    document.getElementById('activeFilters').addEventListener('click', (e) => {
-      if (e.target.tagName.toLowerCase() !== 'button') return;
-      const chip = e.target.closest('.chip'); const { group, value } = chip.dataset; const set = getSet(group);
-      if (set.has(value)) set.delete(value);
-      const btn = document.querySelector(`.filter-group[data-group="${CSS.escape(group)}"] .filter-btn[data-filter-value="${CSS.escape(value)}"]`);
-      if (btn) { btn.classList.remove('is-active'); btn.setAttribute('aria-pressed', 'false'); }
-      renderActiveFilters();
-    });
-    document.getElementById('clearFilters').addEventListener('click', () => {
-      for (const [, set] of filterState) set.clear();
-      document.querySelectorAll('.filter-btn').forEach(btn => { btn.classList.remove('is-active'); btn.setAttribute('aria-pressed','false'); });
-      renderActiveFilters();
-    });
+  // ---------- Event delegation for filter buttons ----------
+  // (More robust than attaching individual listeners)
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.filter-btn');
+    if (!btn) return;
+    const groupEl = btn.closest('.filter-group');
+    if (!groupEl) return;
+    const group = groupEl.dataset.group;
+    const value = btn.dataset.filterValue;
+    const active = toggleValue(group, value);
+    toggleFilterButtonVisual(btn, active);
+  });
 
-    // --- Search wiring: Archidekt + Scryfall ---
-    async function runSearch() {
-      const colors = [...(filterState.get('colors') ?? [])];
-      const formats = [...(filterState.get('format') ?? [])];
-      const format = formats[0] || '';
-      const formatsForArch = formats.map(f => f === 'Commander/EDH' ? 'Commander / EDH' : f);
+  // Remove via chip (no CSS.escape dependency)
+  document.getElementById('activeFilters').addEventListener('click', (e) => {
+    if (e.target.tagName.toLowerCase() !== 'button') return;
+    const chip = e.target.closest('.chip');
+    const { group, value } = chip.dataset;
+    const set = getSet(group);
+    if (set.has(value)) set.delete(value);
 
-      // 1) Archidekt decks
-      let archJson = { decks: [] };
-      try {
-        const archRes = await fetch('/api/archidekt-search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ colors, formats: formatsForArch, includeSiteTotal: true })
-        });
-        archJson = await archRes.json();
-      } catch (e) { console.warn('Archidekt error', e); }
+    // Sync the corresponding button visual state by scanning buttons
+    const matchBtn = Array.from(document.querySelectorAll(`.filter-group[data-group="${group}"] .filter-btn`))
+      .find(b => b.dataset.filterValue === value);
+    if (matchBtn) toggleFilterButtonVisual(matchBtn, false);
 
-      const archMeta = document.getElementById('archMeta');
-      const archList = document.getElementById('archResults');
-      archList.innerHTML = '';
+    renderActiveFilters();
+  });
 
-      // Show "found / total on site"
-      const found = archJson.total_matching ?? archJson.count ?? (archJson.decks || []).length || 0;
-      const totalSite = archJson.site_total;
-      if (totalSite) {
-        archMeta.textContent = `${Number(found).toLocaleString()}/${Number(totalSite).toLocaleString()} decks`;
-      } else if (archJson.total_matching) {
-        archMeta.textContent = `${Number(found).toLocaleString()} matching decks`;
-      } else {
-        archMeta.textContent = '';
-      }
+  // Clear all
+  document.getElementById('clearFilters').addEventListener('click', () => {
+    for (const [, set] of filterState) set.clear();
+    document.querySelectorAll('.filter-btn').forEach(btn => toggleFilterButtonVisual(btn, false));
+    renderActiveFilters();
+  });
 
-      (archJson.decks || []).forEach(d => {
-        const li = document.createElement('li');
-        li.innerHTML = `<a href="${d.url}" target="_blank" rel="noopener">${d.name}</a> — ${d.owner || 'unknown'}`;
-        archList.appendChild(li);
+  // ---------- Search wiring: Archidekt + Scryfall ----------
+  async function runSearch() {
+    const colors = [...(filterState.get('colors') ?? [])];
+    const formats = [...(filterState.get('format') ?? [])];
+    const format = formats[0] || '';
+    const formatsForArch = formats.map(f => f === 'Commander/EDH' ? 'Commander / EDH' : f);
+
+    // 1) Archidekt decks
+    let archJson = { decks: [] };
+    try {
+      const archRes = await fetch('/api/archidekt-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ colors, formats: formatsForArch, includeSiteTotal: true })
       });
-      if (!archList.children.length) archList.innerHTML = '<li>No results (try broadening filters).</li>';
+      archJson = await archRes.json();
+    } catch (e) { console.warn('Archidekt error', e); }
 
-      // 2) Scryfall commander candidates
-      let scryJson = { cards: [] };
-      try {
-        const scryRes = await fetch('/api/scryfall-search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ colors, format, commanderOnly: true, order: 'edhrec', unique: 'cards' })
-        });
-        scryJson = await scryRes.json();
-      } catch (e) { console.warn('Scryfall error', e); }
+    const archMeta = document.getElementById('archMeta');
+    const archList = document.getElementById('archResults');
+    archList.innerHTML = '';
 
-      const scryList = document.getElementById('scryResults');
-      scryList.innerHTML = '';
-      (scryJson.cards || []).slice(0, 20).forEach(c => {
-        const li = document.createElement('li');
-        li.innerHTML = `<a href="${c.scryfall_uri}" target="_blank" rel="noopener">${c.name}</a> — <small>${c.type_line || ''}</small>`;
-        scryList.appendChild(li);
-      });
-      if (!scryList.children.length) scryList.innerHTML = '<li>No commanders found for these colors.</li>';
+    const found = archJson.total_matching ?? archJson.count ?? (archJson.decks || []).length || 0;
+    const totalSite = archJson.site_total;
+    if (totalSite) {
+      archMeta.textContent = `${Number(found).toLocaleString()}/${Number(totalSite).toLocaleString()} decks`;
+    } else if (archJson.total_matching) {
+      archMeta.textContent = `${Number(found).toLocaleString()} matching decks`;
+    } else {
+      archMeta.textContent = '';
     }
 
-    document.getElementById('findDecksBtn').addEventListener('click', runSearch);
-    document.getElementById('uploadCardsBtn').addEventListener('click', () => console.log('Upload Cards clicked (no action wired yet).'));
-  </script>
+    (archJson.decks || []).forEach(d => {
+      const li = document.createElement('li');
+      li.innerHTML = `<a href="${d.url}" target="_blank" rel="noopener">${d.name}</a> — ${d.owner || 'unknown'}`;
+      archList.appendChild(li);
+    });
+    if (!archList.children.length) archList.innerHTML = '<li>No results (try broadening filters).</li>';
+
+    // 2) Scryfall commanders
+    let scryJson = { cards: [] };
+    try {
+      const scryRes = await fetch('/api/scryfall-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ colors, format, commanderOnly: true, order: 'edhrec', unique: 'cards' })
+      });
+      scryJson = await scryRes.json();
+    } catch (e) { console.warn('Scryfall error', e); }
+
+    const scryList = document.getElementById('scryResults');
+    scryList.innerHTML = '';
+    (scryJson.cards || []).slice(0, 20).forEach(c => {
+      const li = document.createElement('li');
+      li.innerHTML = `<a href="${c.scryfall_uri}" target="_blank" rel="noopener">${c.name}</a> — <small>${c.type_line || ''}</small>`;
+      scryList.appendChild(li);
+    });
+    if (!scryList.children.length) scryList.innerHTML = '<li>No commanders found for these colors.</li>';
+  }
+
+  document.getElementById('findDecksBtn').addEventListener('click', runSearch);
+  document.getElementById('uploadCardsBtn').addEventListener('click', () => console.log('Upload Cards clicked (no action wired yet).'));
+</script>
+
 </body>
 </html>
