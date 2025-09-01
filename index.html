@@ -61,6 +61,11 @@
     .chip-row { display:flex; gap:8px; flex-wrap:wrap; }
     .chip { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; background: var(--chip); border:1px solid var(--border); font-size:13px; }
     .chip button { border:none; background:transparent; color:var(--muted); cursor:pointer; font-weight:700; line-height:1; }
+
+    /* Results */
+    .results { margin-top:24px; }
+    .results h2 { font-size:18px; margin:16px 0 8px; }
+    .results ul { padding-left: 18px; }
   </style>
 </head>
 <body>
@@ -121,13 +126,18 @@
         <button class="btn btn-ghost" id="clearFilters" type="button" hidden>Clear all</button>
       </div>
     </section>
+
+    <!-- Results containers -->
+    <section class="results" aria-live="polite">
+      <h2>Deck results (Archidekt)</h2>
+      <ul id="archResults"></ul>
+
+      <h2>Commander candidates (Scryfall)</h2>
+      <ul id="scryResults"></ul>
+    </section>
   </main>
 
   <script>
-    // --- No-op actions for now ---
-    document.getElementById('findDecksBtn').addEventListener('click', () => console.log('Find Decks clicked (no action wired yet).'));
-    document.getElementById('uploadCardsBtn').addEventListener('click', () => console.log('Upload Cards clicked (no action wired yet).'));
-
     // --- Filter state management ---
     // Map<group, Set<value>>
     const filterState = new Map();
@@ -210,6 +220,61 @@
       renderActiveFilters();
       console.log('Cleared all filters');
     });
+
+    // --- Search wiring: Archidekt + Scryfall ---
+    async function runSearch() {
+      const colors = [...(filterState.get('colors') ?? [])];
+      const formats = [...(filterState.get('format') ?? [])];
+      const format = formats[0] || '';
+
+      // Archidekt expects 'Commander / EDH' (with spaces). Convert if needed.
+      const formatsForArch = formats.map(f => f === 'Commander/EDH' ? 'Commander / EDH' : f);
+
+      // 1) Archidekt decks
+      let archJson = { decks: [] };
+      try {
+        const archRes = await fetch('/api/archidekt-search', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ colors, formats: formatsForArch })
+        });
+        archJson = await archRes.json();
+      } catch (e) { console.warn('Archidekt error', e); }
+
+      const archList = document.getElementById('archResults');
+      archList.innerHTML = '';
+      (archJson.decks || []).forEach(d => {
+        const li = document.createElement('li');
+        li.innerHTML = `<a href="${d.url}" target="_blank" rel="noopener">${d.name}</a> — ${d.owner || 'unknown'}`;
+        archList.appendChild(li);
+      });
+      if (!archList.children.length) {
+        archList.innerHTML = '<li>No results (try broadening filters).</li>';
+      }
+
+      // 2) Scryfall commander candidates
+      let scryJson = { cards: [] };
+      try {
+        const scryRes = await fetch('/api/scryfall-search', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ colors, format, commanderOnly: true, order: 'edhrec', unique: 'cards' })
+        });
+        scryJson = await scryRes.json();
+      } catch (e) { console.warn('Scryfall error', e); }
+
+      const scryList = document.getElementById('scryResults');
+      scryList.innerHTML = '';
+      (scryJson.cards || []).slice(0, 20).forEach(c => {
+        const li = document.createElement('li');
+        li.innerHTML = `<a href="${c.scryfall_uri}" target="_blank" rel="noopener">${c.name}</a> — <small>${c.type_line || ''}</small>`;
+        scryList.appendChild(li);
+      });
+      if (!scryList.children.length) {
+        scryList.innerHTML = '<li>No commanders found for these colors.</li>';
+      }
+    }
+
+    document.getElementById('findDecksBtn').addEventListener('click', runSearch);
+    document.getElementById('uploadCardsBtn').addEventListener('click', () => console.log('Upload Cards clicked (no action wired yet).'));
   </script>
 </body>
 </html>
