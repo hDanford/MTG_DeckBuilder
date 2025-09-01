@@ -1,15 +1,13 @@
 // Serverless function (Vercel/Netlify compatible) to search decks on Archidekt
-// Community notes (unofficial): Archidekt exposes JSON under /api/
-// Expect changes; keep usage light and cache responses.
 
 const ARCHIDEKT_BASE = 'https://archidekt.com/api';
 
-// Archidekt format IDs (community known)
+// Archidekt format IDs (community-known)
 export const ARCHIDEKT_FORMATS = {
   Standard: 1,
   Modern: 2,
   'Commander / EDH': 3,
-  'Commander/EDH': 3, // aliases for your UI
+  'Commander/EDH': 3, // UI aliases
   Commander: 3,
   Legacy: 4,
   Vintage: 5,
@@ -45,7 +43,8 @@ function normalizeInput(body) {
     formats = [],
     commanders = [],
     pageSize = 20,
-    orderBy = '-createdAt'
+    orderBy = '-createdAt',
+    includeSiteTotal = false
   } = body || {};
 
   const fmtIds = (Array.isArray(formats) ? formats : [])
@@ -54,7 +53,7 @@ function normalizeInput(body) {
   const safeColors = (Array.isArray(colors) ? colors : []).filter((c) => COLOR_NAMES.includes(c));
   const safeCommanders = (Array.isArray(commanders) ? commanders : []).map((c) => c.trim()).filter(Boolean);
 
-  return { name, colors: safeColors, formats: fmtIds, commanders: safeCommanders, pageSize, orderBy };
+  return { name, colors: safeColors, formats: fmtIds, commanders: safeCommanders, pageSize, orderBy, includeSiteTotal };
 }
 
 async function searchArchidektDecks(params) {
@@ -74,6 +73,10 @@ async function searchArchidektDecks(params) {
     throw new Error(`Archidekt search failed (${res.status}): ${text.slice(0,200)}`);
   }
   const json = await res.json();
+
+  // Many Archidekt endpoints return { count, next, previous, results }
+  const totalMatching = Number(json?.count ?? json?.total ?? 0);
+
   const results = json?.results || json?.decks || json || [];
   const decks = results.map((d) => ({
     id: d.id ?? d?.deck?.id,
@@ -84,7 +87,35 @@ async function searchArchidektDecks(params) {
     createdAt: d.createdAt ?? d?.deck?.createdAt,
     updatedAt: d.updatedAt ?? d?.deck?.updatedAt
   }));
-  return { url, decks };
+
+  return { url, decks, totalMatching };
+}
+
+// --- Site total cache (avoid re-hitting for every search) ---
+let SITE_TOTAL_CACHE = { value: null, ts: 0 };
+const SITE_TOTAL_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+async function fetchArchidektSiteTotal() {
+  // Minimal query: 1 item per page, no filters — use 'count' as site total of public decks
+  const url = `${ARCHIDEKT_BASE}/decks/cards/?pageSize=1`;
+  const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  if (!r.ok) throw new Error(`Archidekt total failed (${r.status})`);
+  const j = await r.json();
+  return Number(j?.count ?? j?.total ?? 0) || null;
+}
+
+async function getSiteTotal() {
+  const now = Date.now();
+  if (SITE_TOTAL_CACHE.value && (now - SITE_TOTAL_CACHE.ts) < SITE_TOTAL_TTL_MS) {
+    return SITE_TOTAL_CACHE.value;
+  }
+  try {
+    const total = await fetchArchidektSiteTotal();
+    SITE_TOTAL_CACHE = { value: total, ts: now };
+    return total;
+  } catch {
+    return SITE_TOTAL_CACHE.value; // return stale if present, else null
+  }
 }
 
 export default async function handler(req, res) {
@@ -97,10 +128,20 @@ export default async function handler(req, res) {
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const params = normalizeInput(body);
-    const { url, decks } = await searchArchidektDecks(params);
+
+    const { url, decks, totalMatching } = await searchArchidektDecks(params);
+    const siteTotal = params.includeSiteTotal ? await getSiteTotal() : null;
 
     res.setHeader('Cache-Control', 's-maxage=180, stale-while-revalidate=600');
-    return res.status(200).json({ ok: true, source: 'archidekt', requestUrl: url, count: decks.length, decks });
+    return res.status(200).json({
+      ok: true,
+      source: 'archidekt',
+      requestUrl: url,
+      count: decks.length,          // number returned in this page
+      total_matching: totalMatching, // total matching the filters
+      site_total: siteTotal,         // total public decks on site (approx.)
+      decks
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ ok: false, error: String(err.message || err) });
