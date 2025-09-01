@@ -1,452 +1,67 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Deck Matcher</title>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Card Deck Building App</title>
+  <style>
+    :root {
+      --bg1: #0b0f1a;
+      --bg2: #111827;
+      --fg: #e8ecf1;
+      --muted: #a6b0bf;
+      --accent: #6ee7ff;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+      color: var(--fg);
+      background: linear-gradient(180deg, var(--bg1), var(--bg2));
+      display: grid;
+      place-items: center;
+    }
+    .card {
+      width: min(640px, 92vw);
+      padding: 40px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+    }
+    h1 {
+      margin: 0 0 16px;
+      font-size: clamp(28px, 4vw, 40px);
+    }
+    p { margin: 0 0 24px; color: var(--muted); }
+    .btn {
+      appearance: none;
+      border: none;
+      padding: 14px 18px;
+      border-radius: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--accent);
+      color: #0b0f1a;
+      transition: transform 0.05s ease;
+    }
+    .btn:active { transform: translateY(1px) scale(0.99); }
+  </style>
+</head>
+<body>
+  <main class="card" role="main">
+    <!-- Change this title text to whatever you like -->
+    <h1>Card Deck Building App</h1>
+    <p>Starter page. The button below doesn’t do anything yet.</p>
+    <button class="btn" type="button" id="primaryBtn">Get Started</button>
+  </main>
 
-    <!-- Tailwind (CDN, no build needed) -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>tailwind.config = { theme: { extend: {} } }</script>
-
-    <!-- React UMD (no imports needed) -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-
-    <!-- Babel to compile JSX right in the browser -->
-    <script src="https://unpkg.com/@babel/standalone@7.26.3/babel.min.js"></script>
-
-    <!-- PapaParse UMD -->
-    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
-  </head>
-  <body class="bg-neutral-50 text-neutral-900">
-    <div id="root"></div>
-
-    <!-- Your app (no imports; uses React globals) -->
-    <script type="text/babel">
-      const { useEffect, useMemo, useRef, useState } = React;
-
-      // Sample decks (replace with Deckbox later)
-      const SAMPLE_DECKS = [
-        { id:"d1", name:"Mono-Red Burn", archetype:"Aggro", format:"Modern", colors:["R"], cards:[
-          {name:"Lightning Bolt",qty:4,price:1.0},{name:"Lava Spike",qty:4,price:0.5},{name:"Monastery Swiftspear",qty:4,price:0.8},
-          {name:"Goblin Guide",qty:4,price:6.0},{name:"Eidolon of the Revel",qty:4,price:3.5},{name:"Rift Bolt",qty:4,price:0.4},
-          {name:"Skewer the Critics",qty:4,price:0.2},{name:"Searing Blaze",qty:4,price:0.35},{name:"Boros Charm",qty:2,price:1.5},
-          {name:"Inspiring Vantage",qty:4,price:8.0},
-        ]},
-        { id:"d2", name:"UW Control", archetype:"Control", format:"Modern", colors:["U","W"], cards:[
-          {name:"Solitude",qty:4,price:32.0},{name:"Subtlety",qty:2,price:16.0},{name:"Supreme Verdict",qty:3,price:3.5},
-          {name:"Teferi, Hero of Dominaria",qty:2,price:16.0},{name:"Prismatic Ending",qty:4,price:1.2},
-          {name:"March of Otherworldly Light",qty:3,price:5.0},{name:"Flooded Strand",qty:4,price:15.0},{name:"Hallowed Fountain",qty:2,price:8.0},
-        ]},
-        { id:"d3", name:"Jund Midrange", archetype:"Midrange", format:"Modern", colors:["B","R","G"], cards:[
-          {name:"Tarmogoyf",qty:3,price:8.0},{name:"Thoughtseize",qty:4,price:10.0},{name:"Ragavan, Nimble Pilferer",qty:4,price:55.0},
-          {name:"Fatal Push",qty:4,price:1.5},{name:"Liliana of the Veil",qty:2,price:12.0},{name:"Bloodstained Mire",qty:4,price:14.0},
-          {name:"Verdant Catacombs",qty:3,price:17.0},
-        ]},
-        { id:"d4", name:"G/W Enchantress", archetype:"Combo", format:"Commander", colors:["G","W"], cards:[
-          {name:"Sythis, Harvest's Hand",qty:1,price:12.0},{name:"Argothian Enchantress",qty:1,price:40.0},
-          {name:"Enchantress's Presence",qty:1,price:7.0},{name:"Sterling Grove",qty:1,price:9.0},{name:"Sol Ring",qty:1,price:1.0},
-          {name:"Utopia Sprawl",qty:1,price:2.0},{name:"Abundant Growth",qty:1,price:0.2},{name:"Serra's Sanctum",qty:1,price:260.0},
-        ]},
-      ];
-      const ALL_ARCHETYPES = ["Aggro","Control","Midrange","Combo","Tempo","Ramp"];
-      const ALL_FORMATS = ["Modern","Standard","Pioneer","Legacy","Commander","Historic"];
-      const COLOR_ORDER = ["W","U","B","R","G"];
-      const cx = (...c) => c.filter(Boolean).join(" ");
-
-      function ColorPill({ code, active, onToggle }) {
-        const colors = {
-          W: "bg-white text-gray-900 border border-gray-300",
-          U: "bg-blue-500 text-white",
-          B: "bg-neutral-800 text-white",
-          R: "bg-red-500 text-white",
-          G: "bg-green-600 text-white",
-        };
-        return (
-          <button
-            aria-pressed={!!active}
-            onClick={() => onToggle(code)}
-            className={cx(
-              "px-2 py-1 rounded-md text-sm font-medium transition shadow-sm",
-              active ? "ring-2 ring-offset-2 ring-indigo-500" : "opacity-80 hover:opacity-100",
-              colors[code]
-            )}
-            title={code}
-          >
-            {code}
-          </button>
-        );
-      }
-
-      function Progress({ value }) {
-        const pct = Math.max(0, Math.min(100, value));
-        return (
-          <div className="w-full h-2 rounded-full bg-neutral-200">
-            <div className="h-2 rounded-full bg-gradient-to-r from-indigo-500 to-cyan-500" style={{ width: pct + "%" }} />
-          </div>
-        );
-      }
-
-      function App() {
-        const [collection, setCollection] = useState({});
-        const [userList, setUserList] = useState([]);
-
-        const [selectedArchetypes, setSelectedArchetypes] = useState(new Set());
-        const [selectedColors, setSelectedColors] = useState(new Set());
-        const [selectedFormat, setSelectedFormat] = useState("All");
-        const [sortKey, setSortKey] = useState("remainingCost");
-        const [sortDir, setSortDir] = useState("asc");
-
-        const [query, setQuery] = useState("");
-        const [results, setResults] = useState([]);
-        const [searching, setSearching] = useState(false);
-        const [searchError, setSearchError] = useState("");
-        const abortRef = useRef(null);
-
-        // Scryfall search
-        useEffect(() => {
-          if (!query || query.trim().length < 2) {
-            setResults([]); setSearchError("");
-            if (abortRef.current) abortRef.current.abort();
-            return;
-          }
-          const controller = new AbortController();
-          abortRef.current = controller;
-          const id = setTimeout(async () => {
-            try {
-              setSearching(true); setSearchError("");
-              const resp = await fetch(
-                "https://api.scryfall.com/cards/search?q=" + encodeURIComponent(query) + "&order=cmc&dir=asc&unique=cards",
-                { signal: controller.signal }
-              );
-              if (!resp.ok) throw new Error("Search failed (" + resp.status + ")");
-              const data = await resp.json();
-              const items = (data?.data || []).slice(0, 10).map((c) => ({
-                name: c.name,
-                colors: c.color_identity || [],
-                cmc: c.cmc ?? null,
-                price: parseFloat(c?.prices?.usd) || parseFloat(c?.prices?.usd_foil) || null,
-              }));
-              setResults(items);
-            } catch (e) {
-              if (e.name !== "AbortError") setSearchError("Search error or rate limit. Try again.");
-            } finally {
-              setSearching(false);
-            }
-          }, 350);
-          return () => { clearTimeout(id); controller.abort(); };
-        }, [query]);
-
-        // User list helpers
-        function addToUserList(card, qty = 1) {
-          setUserList((prev) => {
-            const idx = prev.findIndex((c) => c.name === card.name);
-            if (idx >= 0) {
-              const copy = [...prev];
-              copy[idx] = { ...copy[idx], qty: (copy[idx].qty || 0) + qty };
-              return copy;
-            }
-            return [...prev, { ...card, qty }];
-          });
-        }
-        const removeFromUserList = (name) => setUserList((prev) => prev.filter((c) => c.name !== name));
-        const setUserListQty = (name, qty) => {
-          const n = Math.max(0, Math.min(99, parseInt(qty || 0, 10)));
-          setUserList((prev) => prev.map((c) => (c.name === name ? { ...c, qty: n } : c)));
-        };
-
-        // CSV upload
-        function onUploadCSV(file) {
-          if (!file) return;
-          Papa.parse(file, {
-            header: true, skipEmptyLines: true,
-            complete: (res) => {
-              const rows = res.data || [];
-              const nameKeys = ["Name","Card","Card Name"];
-              const qtyKeys = ["Quantity","Qty","Count"];
-              const priceKeys = ["Price","USD","Cost"];
-              const findKey = (keys, row) => keys.find((k) => Object.prototype.hasOwnProperty.call(row, k));
-              const map = {};
-              rows.forEach((row) => {
-                const nk = findKey(nameKeys, row);
-                const qk = findKey(qtyKeys, row);
-                const pk = findKey(priceKeys, row);
-                const nameRaw = row[nk] ?? "";
-                const name = String(nameRaw).trim();
-                if (!name) return;
-                const qty = Math.max(0, parseInt(row[qk] ?? 1, 10) || 0);
-                const price = pk ? parseFloat(String(row[pk]).replace(/[$,]/g, "")) || null : null;
-                if (!map[name]) map[name] = { qty: 0, price: price };
-                map[name].qty += qty;
-                if (price && !map[name].price) map[name].price = price;
-              });
-              setCollection(map);
-            },
-            error: (err) => alert("CSV parse error: " + err?.message),
-          });
-        }
-
-        // Matching calcs
-        const ownedCountFor = (name) => (collection[name]?.qty || 0) + (userList.find((c) => c.name === name)?.qty || 0);
-        const priceFor = (name, fallback) => {
-          const p = collection[name]?.price;
-          return p != null ? p : fallback != null ? fallback : 0;
-        };
-
-        const filteredAndSortedDecks = useMemo(() => {
-          const decks = SAMPLE_DECKS.map((d) => {
-            const totalNeeded = d.cards.reduce((s, c) => s + c.qty, 0);
-            let owned = 0, remainingCost = 0;
-            d.cards.forEach((c) => {
-              const have = Math.min(ownedCountFor(c.name), c.qty);
-              owned += have;
-              const missing = Math.max(0, c.qty - have);
-              if (missing > 0) remainingCost += missing * (priceFor(c.name, c.price) || 0);
-            });
-            const missingCards = Math.max(0, totalNeeded - owned);
-            const matchPct = totalNeeded > 0 ? Math.round((owned / totalNeeded) * 100) : 0;
-            return { ...d, totalNeeded, owned, missingCards, remainingCost, matchPct };
-          });
-
-          const passesArchetype = (d) => selectedArchetypes.size === 0 || selectedArchetypes.has(d.archetype);
-          const passesFormat = (d) => selectedFormat === "All" || d.format === selectedFormat;
-          const passesColors = (d) => {
-            if (selectedColors.size === 0) return true;
-            for (const col of selectedColors) if (!d.colors.includes(col)) return false;
-            return true;
-          };
-
-          const filtered = decks.filter((d) => passesArchetype(d) && passesFormat(d) && passesColors(d));
-          const dir = sortDir === "asc" ? 1 : -1;
-          filtered.sort((a, b) => (a[sortKey] < b[sortKey] ? -1 * dir : a[sortKey] > b[sortKey] ? 1 * dir : 0));
-          return filtered;
-        }, [collection, userList, selectedArchetypes, selectedColors, selectedFormat, sortKey, sortDir]);
-
-        // UI helpers
-        const fileRef = useRef(null);
-        const toggleArchetype = (a) => setSelectedArchetypes((prev) => { const n = new Set(prev); n.has(a) ? n.delete(a) : n.add(a); return n; });
-        const toggleColor = (c) => setSelectedColors((prev) => { const n = new Set(prev); n.has(c) ? n.delete(c) : n.add(c); return n; });
-        const clearFilters = () => { setSelectedArchetypes(new Set()); setSelectedColors(new Set()); setSelectedFormat("All"); };
-
-        return (
-          <div className="min-h-screen">
-            <header className="sticky top-0 z-20 border-b bg-white/80 backdrop-blur">
-              <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-500 text-white font-bold">DM</span>
-                  <div>
-                    <h1 className="text-lg font-semibold">Deck Matcher</h1>
-                    <p className="text-xs text-neutral-500">Upload, filter, search & match</p>
-                  </div>
-                </div>
-                <a href="https://github.com/" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-sm px-3 py-2 rounded-lg border hover:bg-neutral-50">🔗 View repo</a>
-              </div>
-            </header>
-
-            <main className="mx-auto max-w-7xl px-4 py-6 grid grid-cols-1 lg:grid-cols-[280px,1fr] gap-6">
-              {/* Sidebar */}
-              <aside className="space-y-6">
-                <div className="rounded-2xl border bg-white shadow-sm">
-                  <div className="p-4 border-b flex items-center gap-2">
-                    <span>🧰</span><h2 className="text-sm font-semibold">Filters</h2>
-                    <button onClick={clearFilters} className="ml-auto text-xs text-indigo-600 hover:underline">Reset</button>
-                  </div>
-                  <div className="p-4 space-y-5">
-                    <div>
-                      <p className="text-xs font-medium text-neutral-600 mb-2">Archetype</p>
-                      <div className="flex flex-wrap gap-2">
-                        {ALL_ARCHETYPES.map((a) => (
-                          <button key={a} onClick={() => toggleArchetype(a)}
-                            className={cx("px-3 py-1.5 rounded-full text-xs border",
-                              selectedArchetypes.has(a) ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-white hover:bg-neutral-50")}>
-                            {a}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <p className="text-xs font-medium text-neutral-600 mb-2">Colors (W U B R G)</p>
-                      <div className="flex flex-wrap gap-2">
-                        {COLOR_ORDER.map((c) => (
-                          <ColorPill key={c} code={c} active={selectedColors.has(c)} onToggle={toggleColor} />
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-medium text-neutral-600 mb-1 block">Format</label>
-                      <select value={selectedFormat} onChange={(e) => setSelectedFormat(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">
-                        <option>All</option>
-                        {ALL_FORMATS.map((f) => (<option key={f} value={f}>{f}</option>))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-medium text-neutral-600 mb-1 block">Sort by</label>
-                      <div className="flex gap-2">
-                        <select value={sortKey} onChange={(e) => setSortKey(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">
-                          <option value="remainingCost">Remaining cost</option>
-                          <option value="missingCards">Missing cards</option>
-                          <option value="matchPct">% complete</option>
-                        </select>
-                        <select value={sortDir} onChange={(e) => setSortDir(e.target.value)} className="rounded-lg border px-3 py-2 text-sm">
-                          <option value="asc">Asc</option>
-                          <option value="desc">Desc</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border bg-white shadow-sm">
-                  <div className="p-4 border-b flex items-center gap-2">
-                    <span>⬆️</span><h2 className="text-sm font-semibold">Upload Collection (.csv)</h2>
-                  </div>
-                  <div className="p-4 space-y-3">
-                    <input type="file" accept=".csv,text/csv" className="w-full rounded-xl border px-4 py-2 text-sm"
-                           onChange={(e) => onUploadCSV(e.target.files?.[0])}/>
-                    <p className="text-xs text-neutral-500">Headers: <b>Name</b>/<b>Card</b>, <b>Quantity</b>. Optional: <b>Price</b>.</p>
-                    <div className="text-xs text-neutral-600">Loaded cards: <span className="font-semibold">{Object.keys(collection).length}</span></div>
-                  </div>
-                </div>
-              </aside>
-
-              {/* Main */}
-              <section className="space-y-6">
-                <div className="rounded-2xl border bg-white shadow-sm">
-                  <div className="p-4 border-b flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2"><span>🔎</span><h2 className="text-sm font-semibold">Build a Card List</h2></div>
-                    <div className="text-xs text-neutral-500">Counts with your CSV for matching</div>
-                  </div>
-                  <div className="p-4">
-                    <div className="flex gap-2">
-                      <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search cards (Scryfall)"
-                             className="w-full rounded-lg border px-3 py-2 text-sm" />
-                      <button onClick={() => query && addToUserList({ name: query }, 1)}
-                        className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50" title="Quick add by name">➕ Add</button>
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {searching && <div className="text-sm text-neutral-500">Searching…</div>}
-                      {searchError && <div className="text-sm text-red-600">{searchError}</div>}
-                      {!searching && !searchError && results.map((r) => (
-                        <div key={r.name} className="flex items-center justify-between rounded-lg border p-2">
-                          <div>
-                            <div className="text-sm font-medium">{r.name}</div>
-                            <div className="text-xs text-neutral-500 flex items-center gap-2">
-                              <span>CMC: {r.cmc ?? "–"}</span>
-                              <span className="inline-flex gap-1 items-center">
-                                {r.colors?.length ? r.colors.map((c) => (
-                                  <span key={c} className={cx("inline-block h-3 w-3 rounded-full border",
-                                    c==="W"?"bg-white border-neutral-300":c==="U"?"bg-blue-500":c==="B"?"bg-neutral-800":c==="R"?"bg-red-500":c==="G"?"bg-green-600":"bg-neutral-300")} />
-                                )) : <span>No color</span>}
-                              </span>
-                              {r.price ? <span>${r.price.toFixed(2)}</span> : null}
-                            </div>
-                          </div>
-                          <button onClick={() => addToUserList(r, 1)} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-neutral-50">➕ Add</button>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="mt-5">
-                      <h3 className="text-sm font-semibold mb-2">Your on-site list</h3>
-                      {userList.length === 0 ? (
-                        <div className="text-sm text-neutral-500">No cards yet. Search above or quick-add by name.</div>
-                      ) : (
-                        <div className="space-y-2">
-                          {userList.map((c) => (
-                            <div key={c.name} className="flex items-center gap-2 rounded-lg border p-2">
-                              <div className="flex-1 min-w-0">
-                                <div className="font-medium text-sm truncate">{c.name}</div>
-                                <div className="text-xs text-neutral-500">{(c.colors || []).join("") || "Colorless"} {c.cmc != null ? `• CMC ${c.cmc}` : ""}</div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <label className="text-xs text-neutral-500">Qty</label>
-                                <input type="number" min="0" value={c.qty} onChange={(e) => setUserListQty(c.name, e.target.value)}
-                                       className="w-16 rounded-md border px-2 py-1 text-sm" />
-                                <button onClick={() => removeFromUserList(c.name)}
-                                  className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-red-600 hover:bg-red-50" title="Remove">🗑️</button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border bg-white shadow-sm">
-                  <div className="p-4 border-b">
-                    <h2 className="text-sm font-semibold">Top Matching Decks</h2>
-                    <p className="text-xs text-neutral-500">Based on your CSV upload and on-site list</p>
-                  </div>
-                  <div className="p-4 overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead>
-                        <tr className="text-left text-xs text-neutral-500">
-                          <th className="py-2 pr-4 font-medium">Deck</th>
-                          <th className="py-2 pr-4 font-medium">Format</th>
-                          <th className="py-2 pr-4 font-medium">Archetype</th>
-                          <th className="py-2 pr-4 font-medium">Colors</th>
-                          <th className="py-2 pr-4 font-medium">Owned</th>
-                          <th className="py-2 pr-4 font-medium">Missing</th>
-                          <th className="py-2 pr-4 font-medium">Rem. Cost</th>
-                          <th className="py-2 pr-4 font-medium">Match</th>
-                          <th className="py-2 pr-4 font-medium"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredAndSortedDecks.map((d) => (
-                          <tr key={d.id} className="border-t">
-                            <td className="py-3 pr-4">
-                              <div className="font-medium">{d.name}</div>
-                              <div className="text-xs text-neutral-500">{d.totalNeeded} cards total</div>
-                            </td>
-                            <td className="py-3 pr-4">{d.format}</td>
-                            <td className="py-3 pr-4">{d.archetype}</td>
-                            <td className="py-3 pr-4">
-                              <div className="flex gap-1">
-                                {COLOR_ORDER.map((c) => (
-                                  <span key={c} title={c} className={cx("inline-block h-3 w-3 rounded-full border",
-                                    d.colors.includes(c)
-                                      ? c==="W"?"bg-white border-neutral-300":c==="U"?"bg-blue-500":c==="B"?"bg-neutral-800":c==="R"?"bg-red-500":c==="G"?"bg-green-600":"bg-neutral-300"
-                                      : "bg-neutral-200"
-                                  )} />
-                                ))}
-                              </div>
-                            </td>
-                            <td className="py-3 pr-4">{d.owned}</td>
-                            <td className="py-3 pr-4">{d.missingCards}</td>
-                            <td className="py-3 pr-4">${d.remainingCost.toFixed(2)}</td>
-                            <td className="py-3 pr-4 w-48">
-                              <div className="flex items-center gap-2">
-                                <Progress value={d.matchPct} />
-                                <span className="w-10 text-right text-xs text-neutral-600">{d.matchPct}%</span>
-                              </div>
-                            </td>
-                            <td className="py-3 pr-4">
-                              <button className="rounded-md border px-2 py-1 text-xs hover:bg-neutral-50">View</button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </section>
-            </main>
-
-            <footer className="mx-auto max-w-7xl px-4 pb-10 pt-2 text-xs text-neutral-500">
-              <p>Prototype only. Next: wire Deckbox API, add auth for saved lists.</p>
-            </footer>
-          </div>
-        );
-      }
-
-      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-    </script>
-  </body>
+  <script>
+    // Intentionally a no-op for now.
+    document.getElementById('primaryBtn').addEventListener('click', () => {
+      console.log('Button clicked (no action wired yet).');
+    });
+  </script>
+</body>
 </html>
