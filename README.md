@@ -1,18 +1,20 @@
 # MTG_DeckBuilder
 
-# Card Deck Building App (MVP)
+Static site + serverless endpoints for searching decks and commanders.
 
+## Live locally
+- Open `index.html` directly, or
+- `python -m http.server 8000` → http://localhost:8000
 
-A minimal static site starter with a title and a no-op button. Deployed with GitHub Pages.
+## Deploy
+- **GitHub Pages** for the static site.
+- **Vercel** for serverless functions under `/api/*`.
 
+## Endpoints
+- `POST /api/archidekt-search` — search Archidekt decks by colors/formats.
+- `GET  /api/archidekt-deck?id=12345` — fetch one Archidekt deck (optional).
+- `POST /api/scryfall-search` — search Scryfall for cards (commander candidates).
 
-## Quick Start
-1. In GitHub, create a file named `index.html` (you already did) and paste the starter.
-2. (Optional) Turn on GitHub Pages: **Settings → Pages → Source: “Deploy from a branch” → Branch: `main` / root → Save.**
-3. (Optional) Add a favicon (`favicon.svg`) and a 404 page (`404.html`).
-
-
-## Local Preview
-- You can simply double‑click `index.html` to open it in your browser.
-- For a tidy local server (optional):
-- **Python 3**: `python -m http.server 8000` then visit `http://localhost:8000`.
+## Notes
+- Keep requests modest; cache where possible.
+- No scraping. Scryfall API is public; Archidekt JSON endpoints are accessible but not formally documented.
