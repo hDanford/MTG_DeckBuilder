@@ -1,68 +1,90 @@
-// Serverless function to query Scryfall's public API for cards
-// Docs: https://scryfall.com/docs/api  | Search syntax: https://scryfall.com/docs/syntax
-// Notes: Respect Scryfall's rate guidance (~10 req/s) and add small delays if batching.
+// Serverless function (Vercel/Netlify compatible) to search decks on Archidekt
+// Community notes (unofficial): Archidekt exposes JSON under /api/
+// Expect changes; keep usage light and cache responses.
 
-const BASE = 'https://api.scryfall.com/cards/search';
-const FORMAT_MAP = {
-  Standard: 'standard',
-  Modern: 'modern',
-  Pioneer: 'pioneer',
-  Legacy: 'legacy',
-  Vintage: 'vintage',
-  Pauper: 'pauper',
-  Brawl: 'brawl',
-  Commander: 'commander',
-  'Commander/EDH': 'commander',
-  'Commander / EDH': 'commander'
+const ARCHIDEKT_BASE = 'https://archidekt.com/api';
+
+// Archidekt format IDs (community known)
+export const ARCHIDEKT_FORMATS = {
+  Standard: 1,
+  Modern: 2,
+  'Commander / EDH': 3,
+  'Commander/EDH': 3, // aliases for your UI
+  Commander: 3,
+  Legacy: 4,
+  Vintage: 5,
+  Pauper: 6,
+  Custom: 7,
+  Frontier: 8,
+  'Future Standard': 9,
+  'Penny Dreadful': 10,
+  '1v1 Commander': 11,
+  'Dual Commander': 12,
+  Brawl: 13
 };
-const COLOR_LETTERS = { White: 'w', Blue: 'u', Black: 'b', Red: 'r', Green: 'g', Colorless: 'c' };
 
-function toIdLetters(colors) {
-  const letters = (colors || []).map((c) => COLOR_LETTERS[c]).filter(Boolean);
-  // ignore Colorless when mixed with others for identity queries
-  const filtered = letters.length > 1 ? letters.filter((l) => l !== 'c') : letters;
-  return [...new Set(filtered)].sort().join('');
+const COLOR_NAMES = ['White', 'Blue', 'Black', 'Red', 'Green', 'Colorless'];
+
+function toQuery(params) {
+  const usp = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v == null || v === '') return;
+    if (Array.isArray(v)) {
+      if (v.length) usp.append(k, v.join(','));
+    } else {
+      usp.append(k, String(v));
+    }
+  });
+  return usp.toString();
 }
 
-function buildQuery({ colors = [], format = '', commanderOnly = false, q = '' }) {
-  const parts = [];
-  // Color identity coverage search (id<=wubrg)
-  const id = toIdLetters(colors);
-  if (id) parts.push(`id<=${id}`);
+function normalizeInput(body) {
+  const {
+    name = '',
+    colors = [],
+    formats = [],
+    commanders = [],
+    pageSize = 20,
+    orderBy = '-createdAt'
+  } = body || {};
 
-  // Format legality
-  const fmt = FORMAT_MAP[format] || '';
-  if (fmt) parts.push(`legal:${fmt}`);
+  const fmtIds = (Array.isArray(formats) ? formats : [])
+    .map((f) => ARCHIDEKT_FORMATS[f])
+    .filter(Boolean);
+  const safeColors = (Array.isArray(colors) ? colors : []).filter((c) => COLOR_NAMES.includes(c));
+  const safeCommanders = (Array.isArray(commanders) ? commanders : []).map((c) => c.trim()).filter(Boolean);
 
-  if (commanderOnly || fmt === 'commander') parts.push('is:commander');
-
-  if (q && typeof q === 'string') parts.push(q.trim());
-
-  return parts.join(' ');
+  return { name, colors: safeColors, formats: fmtIds, commanders: safeCommanders, pageSize, orderBy };
 }
 
-async function searchScryfall({ colors, format, commanderOnly, q, order = 'edhrec', unique = 'cards', page = 1 }) {
-  const query = buildQuery({ colors, format, commanderOnly, q });
-  const url = `${BASE}?q=${encodeURIComponent(query)}&order=${encodeURIComponent(order)}&unique=${encodeURIComponent(unique)}&page=${encodeURIComponent(page)}`;
-  const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
-  if (!r.ok) {
-    const text = await r.text();
-    throw new Error(`Scryfall error ${r.status}: ${text.slice(0, 200)}`);
+async function searchArchidektDecks(params) {
+  const qs = toQuery({
+    name: params.name || '',
+    colors: params.colors,                       // comma list of color names
+    formats: params.formats.join(','),          // comma list of IDs
+    commanders: params.commanders.length ? `\"${params.commanders.join('\",\"')}\"` : undefined,
+    pageSize: Math.max(1, Math.min(100, Number(params.pageSize) || 20)),
+    orderBy: params.orderBy || '-createdAt'
+  });
+
+  const url = `${ARCHIDEKT_BASE}/decks/cards/?${qs}`;
+  const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Archidekt search failed (${res.status}): ${text.slice(0,200)}`);
   }
-  const json = await r.json();
-  // Normalize a small subset for the UI
-  const cards = (json?.data || []).map((c) => ({
-    id: c.id,
-    name: c.name,
-    type_line: c.type_line,
-    colors: c.colors,
-    color_identity: c.color_identity,
-    scryfall_uri: c.scryfall_uri,
-    image_uris: c.image_uris || c.card_faces?.[0]?.image_uris || null,
-    prices: c.prices || null,
-    oracle_text: c.oracle_text || c.card_faces?.map(f => f.oracle_text).filter(Boolean).join(' // ') || null
+  const json = await res.json();
+  const results = json?.results || json?.decks || json || [];
+  const decks = results.map((d) => ({
+    id: d.id ?? d?.deck?.id,
+    name: d.name ?? d?.deck?.name,
+    owner: d.owner ?? d?.deck?.owner,
+    formatId: d.format ?? d?.deck?.format,
+    url: `https://archidekt.com/decks/${d.id ?? d?.deck?.id}`,
+    createdAt: d.createdAt ?? d?.deck?.createdAt,
+    updatedAt: d.updatedAt ?? d?.deck?.updatedAt
   }));
-  return { query, request_url: url, has_more: !!json.has_more, next_page: json.next_page || null, total_cards: json.total_cards || cards.length, cards };
+  return { url, decks };
 }
 
 export default async function handler(req, res) {
@@ -74,16 +96,15 @@ export default async function handler(req, res) {
 
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
-    const { colors = [], format = '', commanderOnly = false, q = '', order, unique, page } = body;
+    const params = normalizeInput(body);
+    const { url, decks } = await searchArchidektDecks(params);
 
-    const data = await searchScryfall({ colors, format, commanderOnly, q, order, unique, page });
-    // Cache briefly on the edge
-    res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=600');
-    return res.status(200).json({ ok: true, source: 'scryfall', ...data });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ ok: false, error: String(e.message || e) });
+    res.setHeader('Cache-Control', 's-maxage=180, stale-while-revalidate=600');
+    return res.status(200).json({ ok: true, source: 'archidekt', requestUrl: url, count: decks.length, decks });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: String(err.message || err) });
   }
 }
 
-export const core = { buildQuery, searchScryfall };
+export const core = { ARCHIDEKT_FORMATS, searchArchidektDecks };
