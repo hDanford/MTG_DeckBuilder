@@ -62,6 +62,40 @@
     .results h2 { font-size:18px; margin:16px 0 8px; }
     .results ul { padding-left: 18px; }
     .results-meta { color: var(--muted); margin: 4px 0 8px; }
+
+    /* Card picker */
+    .cards { margin: 18px 0 22px; }
+    .cards h2 { font-size:18px; margin:0 0 10px; }
+    .card-picker { position: relative; }
+    #cardSearchInput {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--fg);
+      outline: none;
+    }
+    .suggestions {
+      position: absolute;
+      z-index: 20;
+      inset-inline: 0;
+      margin: 6px 0 0;
+      padding: 6px 0;
+      list-style: none;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      max-height: 260px;
+      overflow: auto;
+      display: none;
+    }
+    .suggestions.show { display:block; }
+    .suggestions li { padding: 8px 12px; cursor: pointer; }
+    .suggestions li[aria-selected="true"], .suggestions li:hover { background: var(--surface-2); }
+    .cards .chip { background: rgba(110,231,255,0.12); border-color: rgba(110,231,255,0.25); }
+
+    .muted { color: var(--muted); }
   </style>
 </head>
 <body>
@@ -75,6 +109,17 @@
     <section class="actions" aria-label="Page actions">
       <button class="btn btn-primary" type="button" id="findDecksBtn">Find Decks</button>
       <button class="btn btn-secondary" type="button" id="uploadCardsBtn">Upload Cards</button>
+    </section>
+
+    <!-- Cards to match -->
+    <section class="cards" aria-labelledby="cards-heading">
+      <h2 id="cards-heading">Cards to match (optional)</h2>
+      <div class="card-picker">
+        <input id="cardSearchInput" type="text" placeholder="Search cards by name…" aria-autocomplete="list" aria-controls="cardSuggestions" aria-expanded="false" />
+        <ul id="cardSuggestions" class="suggestions" role="listbox" aria-label="Card suggestions"></ul>
+      </div>
+      <div id="selectedCards" class="chip-row" aria-live="polite" aria-label="Selected cards"></div>
+      <p class="muted" id="cardHelp">Tip: add a few staples you own; we'll find decks containing as many as possible.</p>
     </section>
 
     <section class="filters" aria-labelledby="filter-heading">
@@ -130,6 +175,7 @@
       <ul id="archResults"></ul>
 
       <h2>Commander candidates (Scryfall)</h2>
+      <div id="scryMeta" class="results-meta"></div>
       <ul id="scryResults"></ul>
     </section>
   </main>
@@ -172,18 +218,21 @@
     return willActivate;
   }
 
-  // ---------- Event delegation for filter buttons ----------
-  // (More robust than attaching individual listeners)
-  document.addEventListener('click', (e) => {
-    const btn = e.target.closest('.filter-btn');
-    if (!btn) return;
-    const groupEl = btn.closest('.filter-group');
-    if (!groupEl) return;
-    const group = groupEl.dataset.group;
-    const value = btn.dataset.filterValue;
-    const active = toggleValue(group, value);
-    toggleFilterButtonVisual(btn, active);
-  });
+  // ---------- Bind filter buttons directly ----------
+  function bindFilterButtons(){
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const groupEl = btn.closest('.filter-group');
+        if (!groupEl) return;
+        const group = groupEl.dataset.group;
+        const value = btn.dataset.filterValue;
+        const active = toggleValue(group, value);
+        toggleFilterButtonVisual(btn, active);
+      }, { passive: true });
+    });
+  }
+  // Bind once on load (static buttons)
+  bindFilterButtons();
 
   // Remove via chip (no CSS.escape dependency)
   document.getElementById('activeFilters').addEventListener('click', (e) => {
@@ -208,20 +257,110 @@
     renderActiveFilters();
   });
 
+  // ---------- Selected cards (picker) ----------
+  const selectedCards = new Set(); // store card names (exact)
+  const selectedCardsEl = document.getElementById('selectedCards');
+  const inputEl = document.getElementById('cardSearchInput');
+  const suggEl = document.getElementById('cardSuggestions');
+
+  function renderSelectedCards(){
+    selectedCardsEl.innerHTML = '';
+    [...selectedCards].forEach(name => {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.innerHTML = `${name} <button type="button" aria-label="Remove ${name}">×</button>`;
+      chip.querySelector('button').addEventListener('click', () => {
+        selectedCards.delete(name);
+        renderSelectedCards();
+      });
+      selectedCardsEl.appendChild(chip);
+    });
+  }
+
+  function debounce(fn, ms=250){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args),ms); }; }
+
+  const fetchAutocomplete = debounce(async (q)=>{
+    if (!q || q.trim().length < 2) { suggEl.classList.remove('show'); suggEl.innerHTML=''; inputEl.setAttribute('aria-expanded','false'); return; }
+    try {
+      const res = await fetch(`https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      const names = data?.data || [];
+      suggEl.innerHTML = '';
+      names.slice(0, 12).forEach((name, i) => {
+        const li = document.createElement('li');
+        li.role = 'option';
+        li.id = `sugg-${i}`;
+        li.textContent = name;
+        li.setAttribute('aria-selected','false');
+        li.addEventListener('mousedown', (ev)=>{ // mousedown so it fires before input blur
+          ev.preventDefault();
+          addCard(name);
+        });
+        suggEl.appendChild(li);
+      });
+      if (names.length){ suggEl.classList.add('show'); inputEl.setAttribute('aria-expanded','true'); }
+      else { suggEl.classList.remove('show'); inputEl.setAttribute('aria-expanded','false'); }
+      highlightSuggestion(0);
+    } catch(e){
+      console.warn('Autocomplete failed', e);
+      suggEl.classList.remove('show'); inputEl.setAttribute('aria-expanded','false');
+    }
+  }, 220);
+
+  inputEl.addEventListener('input', (e)=> fetchAutocomplete(e.target.value));
+  inputEl.addEventListener('keydown', (e)=>{
+    const items = [...suggEl.querySelectorAll('li')];
+    const current = items.findIndex(li => li.getAttribute('aria-selected') === 'true');
+    if (e.key === 'ArrowDown'){
+      e.preventDefault();
+      const next = Math.min(items.length-1, current+1);
+      highlightSuggestion(next);
+    } else if (e.key === 'ArrowUp'){
+      e.preventDefault();
+      const prev = Math.max(0, current-1);
+      highlightSuggestion(prev);
+    } else if (e.key === 'Enter'){
+      if (items.length){ e.preventDefault(); addCard(items[Math.max(0,current)].textContent); }
+      else if (inputEl.value.trim().length){ e.preventDefault(); addCard(inputEl.value.trim()); }
+    } else if (e.key === 'Escape'){
+      suggEl.classList.remove('show'); inputEl.setAttribute('aria-expanded','false');
+    }
+  });
+  document.addEventListener('click', (e)=>{ if(!e.target.closest('.card-picker')) { suggEl.classList.remove('show'); inputEl.setAttribute('aria-expanded','false'); } });
+
+  function highlightSuggestion(index){
+    [...suggEl.querySelectorAll('li')].forEach((li,i)=> li.setAttribute('aria-selected', i===index ? 'true':'false'));
+  }
+
+  function addCard(name){
+    if (!name) return;
+    if (selectedCards.size >= 100) return; // hard cap to keep payloads sane
+    selectedCards.add(name);
+    renderSelectedCards();
+    inputEl.value = '';
+    suggEl.classList.remove('show'); inputEl.setAttribute('aria-expanded','false');
+  }
+
   // ---------- Search wiring: Archidekt + Scryfall ----------
   async function runSearch() {
     const colors = [...(filterState.get('colors') ?? [])];
     const formats = [...(filterState.get('format') ?? [])];
-    const format = formats[0] || '';
+    const archetypes = [...(filterState.get('archetype') ?? [])];
+    const cards = [...selectedCards]; // names only
+
+    const format = formats[0] || ''; // legacy single for scryfall commander endpoint
     const formatsForArch = formats.map(f => f === 'Commander/EDH' ? 'Commander / EDH' : f);
+
+    // Set UI state
+    const btn = document.getElementById('findDecksBtn');
+    btn.disabled = true; btn.textContent = 'Searching…';
 
     // 1) Archidekt decks
     let archJson = { decks: [] };
     try {
       const archRes = await fetch('/api/archidekt-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ colors, formats: formatsForArch, includeSiteTotal: true })
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ colors, formats: formatsForArch, archetypes, cards, includeSiteTotal: true })
       });
       archJson = await archRes.json();
     } catch (e) { console.warn('Archidekt error', e); }
@@ -242,22 +381,24 @@
 
     (archJson.decks || []).forEach(d => {
       const li = document.createElement('li');
-      li.innerHTML = `<a href="${d.url}" target="_blank" rel="noopener">${d.name}</a> — ${d.owner || 'unknown'}`;
+      const score = (typeof d.match_score === 'number') ? ` — match: ${Math.round(d.match_score*100)}%` : '';
+      li.innerHTML = `<a href="${d.url}" target="_blank" rel="noopener">${d.name}</a> — ${d.owner || 'unknown'}${score}`;
       archList.appendChild(li);
     });
-    if (!archList.children.length) archList.innerHTML = '<li>No results (try broadening filters).</li>';
+    if (!archList.children.length) archList.innerHTML = '<li>No results (try broadening filters or removing cards).</li>';
 
-    // 2) Scryfall commanders
+    // 2) Scryfall: commander/card helpers (still useful alongside deck results)
     let scryJson = { cards: [] };
     try {
       const scryRes = await fetch('/api/scryfall-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ colors, format, commanderOnly: true, order: 'edhrec', unique: 'cards' })
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // Pass cards so your backend can bias/boost commanders that synergize with them if desired
+        body: JSON.stringify({ colors, format, commanderOnly: true, order: 'edhrec', unique: 'cards', cards })
       });
       scryJson = await scryRes.json();
     } catch (e) { console.warn('Scryfall error', e); }
 
+    const scryMeta = document.getElementById('scryMeta');
     const scryList = document.getElementById('scryResults');
     scryList.innerHTML = '';
     (scryJson.cards || []).slice(0, 20).forEach(c => {
@@ -265,7 +406,11 @@
       li.innerHTML = `<a href="${c.scryfall_uri}" target="_blank" rel="noopener">${c.name}</a> — <small>${c.type_line || ''}</small>`;
       scryList.appendChild(li);
     });
+    scryMeta.textContent = (scryJson.cards?.length) ? `${scryJson.cards.length.toLocaleString()} commanders suggested` : '';
     if (!scryList.children.length) scryList.innerHTML = '<li>No commanders found for these colors.</li>';
+
+    // Reset UI state
+    btn.disabled = false; btn.textContent = 'Find Decks';
   }
 
   document.getElementById('findDecksBtn').addEventListener('click', runSearch);
